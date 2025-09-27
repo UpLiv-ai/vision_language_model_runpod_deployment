@@ -4,7 +4,7 @@ from PIL import Image
 from transformers import AutoModel, AutoTokenizer
 
 # --- 1. Configuration ---
-IMAGE_PATH = "./test_of_pipeline.jpg" 
+IMAGE_PATH = "./test_of_pipeline.png" 
 PROMPT = """
 VLM Prompt for Image Analysis
 
