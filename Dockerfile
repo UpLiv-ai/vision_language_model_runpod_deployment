@@ -1,6 +1,6 @@
 # 1. Specify the Base Image
 # Use the RunPod PyTorch image with Python 3.11 and CUDA 12.8.1
-FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
+FROM runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04
 
 # 2. Set the Working Directory
 # This is where your code and dependencies will live inside the container.
