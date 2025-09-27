@@ -47,11 +47,13 @@ else:
 print("Loading model and tokenizer...")
 model = AutoModel.from_pretrained(
     path_to_load,
-    trust_remote_code=True
+    trust_remote_code=True,
+    low_cpu_mem_usage=True
 )
 tokenizer = AutoTokenizer.from_pretrained(
     path_to_load,
-    trust_remote_code=True
+    trust_remote_code=True,
+    low_cpu_mem_usage=True
 )
 
 # Move model to GPU and set to evaluation mode
