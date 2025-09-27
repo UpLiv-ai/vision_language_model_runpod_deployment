@@ -72,7 +72,7 @@ messages = [{'role': 'user', 'content': PROMPT}]
 print("Running inference...")
 response = model.chat(
     image=image,
-    messages=messages,
+    msgs=messages,
     tokenizer=tokenizer,
     sampling=True,
     temperature=0.7 
