@@ -3,6 +3,9 @@ import torch
 import runpod
 import base64
 import requests
+import json
+import re
+from typing import Dict, Any
 from io import BytesIO
 from PIL import Image
 from transformers import AutoModel, AutoTokenizer
@@ -58,7 +61,24 @@ model.eval()
 print("✅ Model loaded successfully and is ready for inference.")
 
 
-# --- 2. Handler Function (Runs for Each API Request) ---
+# --- 2. Helper Functions ---
+
+def parse_vlm_output(vlm_text_response: str) -> Dict[str, Any]:
+    """Extracts a JSON object from the VLM's text response."""
+    # Use regex to find content between the first '{' and the last '}'
+    match = re.search(r'\{.*\}', vlm_text_response, re.DOTALL)
+    if not match:
+        raise ValueError(f"Could not find a valid JSON object in the VLM response:\n{vlm_text_response}")
+    
+    json_string = match.group(0)
+    try:
+        return json.loads(json_string)
+    except json.JSONDecodeError as e:
+        print(f"Error: Failed to parse JSON from VLM output. String was:\n{json_string}")
+        raise e
+
+
+# --- 3. Handler Function (Runs for Each API Request) ---
 
 def handler(job):
     """
@@ -69,21 +89,18 @@ def handler(job):
     # --- Get Image from URL (Azure Blob / Web) ---
     image_url = job_input.get('image_url')
     
-    # Fallback support for base64 if URL is missing, but prioritizing URL
+    # Fallback support for base64
     image_base64 = job_input.get('image_base64')
 
     image = None
 
     if image_url:
         try:
-            # We remove stream=True and use BytesIO(response.content) 
-            # This ensures the full image is downloaded to RAM before PIL tries to read it,
-            # which resolves common issues with Azure Blob streams not being seekable.
             print(f"Downloading image from: {image_url}")
             response = requests.get(image_url)
             response.raise_for_status()
             
-            # Load into BytesIO buffer
+            # Load into BytesIO buffer to handle non-seekable streams
             image = Image.open(BytesIO(response.content)).convert('RGB')
             
         except Exception as e:
@@ -105,7 +122,8 @@ def handler(job):
 
     # --- Run Inference ---
     try:
-        response = model.chat(
+        # Generate raw string response
+        raw_response = model.chat(
             image=image,
             msgs=messages,
             tokenizer=tokenizer,
@@ -113,14 +131,24 @@ def handler(job):
             temperature=0.7
         )
 
-        # --- Debugging Output (Preserved) ---
-        print(f"--- Model Generated Response --- \n{response}\n--------------------------------")
+        print(f"--- Raw Model Response --- \n{raw_response}\n--------------------------")
 
-        # Return the raw string response (JSON)
-        return response
+        # Parse the raw string into a JSON object
+        parsed_json = parse_vlm_output(raw_response)
+        
+        # Return the actual Python dictionary (which RunPod serializes to JSON)
+        return parsed_json
+
+    except ValueError as ve:
+        # Handle cases where the model didn't output JSON structure
+        return {"error": f"Model output parsing failed: {str(ve)}", "raw_output": raw_response}
+    except json.JSONDecodeError as je:
+        # Handle cases where the JSON was malformed
+        return {"error": f"Invalid JSON generated: {str(je)}", "raw_output": raw_response}
     except Exception as e:
+        # General inference errors
         return {"error": f"Inference failed: {e}"}
 
 
-# --- 3. Start the RunPod Serverless Worker ---
+# --- 4. Start the RunPod Serverless Worker ---
 runpod.serverless.start({"handler": handler})
