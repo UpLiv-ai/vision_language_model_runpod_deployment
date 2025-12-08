@@ -66,25 +66,38 @@ def handler(job):
     """
     job_input = job.get('input', {})
 
-    # --- Get Image ---
+    # --- Get Image from URL (Azure Blob / Web) ---
     image_url = job_input.get('image_url')
+    
+    # Fallback support for base64 if URL is missing, but prioritizing URL
     image_base64 = job_input.get('image_base64')
+
+    image = None
 
     if image_url:
         try:
-            response = requests.get(image_url, stream=True)
+            # We remove stream=True and use BytesIO(response.content) 
+            # This ensures the full image is downloaded to RAM before PIL tries to read it,
+            # which resolves common issues with Azure Blob streams not being seekable.
+            print(f"Downloading image from: {image_url}")
+            response = requests.get(image_url)
             response.raise_for_status()
-            image = Image.open(response.raw).convert('RGB')
+            
+            # Load into BytesIO buffer
+            image = Image.open(BytesIO(response.content)).convert('RGB')
+            
         except Exception as e:
             return {"error": f"Failed to download image from URL: {e}"}
+            
     elif image_base64:
         try:
             image_bytes = base64.b64decode(image_base64)
             image = Image.open(BytesIO(image_bytes)).convert('RGB')
         except Exception as e:
             return {"error": f"Failed to decode base64 image: {e}"}
+            
     else:
-        return {"error": "No image provided. Please include 'image_url' or 'image_base64' in the input."}
+        return {"error": "No image provided. Please include 'image_url' in the input."}
 
     # --- Get Prompt ---
     prompt = job_input.get('prompt', DEFAULT_PROMPT)
@@ -100,10 +113,10 @@ def handler(job):
             temperature=0.7
         )
 
-        # --- ADDED THIS LINE FOR DEBUGGING ---
+        # --- Debugging Output (Preserved) ---
         print(f"--- Model Generated Response --- \n{response}\n--------------------------------")
 
-        # Return the raw string response, which should be the JSON
+        # Return the raw string response (JSON)
         return response
     except Exception as e:
         return {"error": f"Inference failed: {e}"}
