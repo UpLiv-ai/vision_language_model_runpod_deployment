@@ -13,17 +13,53 @@ from transformers import AutoModel, AutoTokenizer
 # --- 1. Model Loading (Runs Once at Worker Startup) ---
 
 MODEL_ID = "openbmb/MiniCPM-V-4_5"
-DEFAULT_PROMPT = """
+
+GENERIC_PROMPT_TEMPLATE = """
 VLM Prompt for Image Analysis
-Your task is to act as an expert scene analyzer. For the given image, identify the primary object and generate a single, valid JSON object that describes its key attributes. The primary object is the main subject of the image, such as a piece of furniture, a door, or a cabinet. The output must be only the JSON object and nothing else.
+Your task is to act as an expert scene analyzer. For the given image, identify the primary object and generate a single, valid JSON object that describes its key attributes. The output must be only the JSON object and nothing else.
+You are given an approximate bounding box for the object (x, y, width, height), where x and y are the top-left pixel location, width extends to the right, and height extends downward. This bounding box is only a rough approximation. You must refine it to better fit the object and output the refined bounding box.
+Approximate bbox (x, y, width, height): {bbox}
 JSON Structure and Field Definitions:
-Your response must conform to the a JSON structure. Analyze the primary object in the image and fill in the values accordingly.
-object_description (string): A concise but descriptive summary of the primary object. Include its type, primary material, and color.
+Your response must conform to a JSON structure. Analyze the primary object in the image and in particular bounding box region and fill in the values accordingly.
+object_description (string): {object_description_line}
 is_transparent_container (boolean): Set to true only if the object is a container with large transparent surfaces designed to show its contents (e.g., a glass-front cabinet, a display case, a curio).
 has_mirror (boolean): Set to true if the object has a mirrored surface (e.g., a bathroom vanity mirror, a mirrored closet door).
 has_countertop (boolean): Set to true if the object is or includes a countertop surface (e.g., a kitchen island, a bathroom vanity top, a counter).
 has_glass (boolean): Set to true if any part of the object is made of glass. This includes window panes, glass shelves, or glass panels.
 has_clear_plastic (boolean): Set to true if any part of the object is made of clear or translucent plastic.
+refined_bbox (array of 4 numbers): The refined bounding box in the same format [x, y, width, height], tightly fit to the object.
+"""
+
+WINDOW_PROMPT_TEMPLATE = """
+VLM Prompt for Image Analysis
+Your task is to act as an expert scene analyzer. The object is a window. Focus ONLY on the window frame. Do not describe the glass, view, or anything beyond the frame. The output must be only the JSON object and nothing else.
+You are given an approximate bounding box for the window (x, y, width, height), where x and y are the top-left pixel location, width extends to the right, and height extends downward. This bounding box is only a rough approximation. You must refine it to better fit the window frame and output the refined bounding box.
+Approximate bbox (x, y, width, height): {bbox}
+JSON Structure and Field Definitions:
+Your response must conform to a JSON structure. Analyze the window frame and fill in the values accordingly.
+object_description (string): A concise description of the window frame only. Include frame material and color.
+refined_bbox (array of 4 numbers): The refined bounding box in the same format [x, y, width, height], tightly fit to the window frame.
+"""
+
+DOOR_PROMPT_TEMPLATE = """
+VLM Prompt for Image Analysis
+Your task is to act as an expert scene analyzer. The object is a door. Describe the door and its frame together. The output must be only the JSON object and nothing else.
+You are given an approximate bounding box for the door (x, y, width, height), where x and y are the top-left pixel location, width extends to the right, and height extends downward. This bounding box is only a rough approximation. You must refine it to better fit the door and its frame and output the refined bounding box.
+Approximate bbox (x, y, width, height): {bbox}
+JSON Structure and Field Definitions:
+Your response must conform to a JSON structure. Analyze the door and its frame and fill in the values accordingly.
+object_description (string): A concise description of the door and its frame. Include materials and colors.
+refined_bbox (array of 4 numbers): The refined bounding box in the same format [x, y, width, height], tightly fit to the door and frame.
+"""
+
+SURFACE_PROMPT_TEMPLATE = """
+VLM Prompt for Image Analysis
+Your task is to act as an expert scene analyzer. The object is a {surface} surface. Analyze the surface texture in the image and choose the single best-matching description from the provided list. Factor out lighting effects and shadows; base your choice on the underlying material/PBR texture. The output must be only the JSON object and nothing else.
+JSON Structure and Field Definitions:
+Your response must conform to a JSON structure. Fill in the values accordingly.
+matched_texture_description (string): The exact string from the provided list that best matches the surface texture.
+Available {surface} textures:
+{options_block}
 """
 
 # Use RunPod's persistent volume if available
@@ -80,51 +116,138 @@ def parse_vlm_output(vlm_text_response: str) -> Dict[str, Any]:
 
 # --- 3. Handler Function (Runs for Each API Request) ---
 
+def _coerce_image_urls(job_input: Dict[str, Any]):
+    """
+    Normalize image URL inputs to a list.
+    Supports:
+      - image_url: str or list[str]
+      - image_urls: list[str]
+    """
+    image_url = job_input.get('image_url')
+    image_urls = job_input.get('image_urls')
+
+    if isinstance(image_urls, list):
+        return [url for url in image_urls if url]
+
+    if isinstance(image_url, list):
+        return [url for url in image_url if url]
+
+    if isinstance(image_url, str) and image_url:
+        return [image_url]
+
+    return []
+
+
+def _load_image_from_url(image_url: str):
+    try:
+        print(f"Downloading image from: {image_url}")
+        response = requests.get(image_url)
+        response.raise_for_status()
+        return Image.open(BytesIO(response.content)).convert('RGB')
+    except Exception as e:
+        return {"error": f"Failed to download image from URL: {e}"}
+
+
+def _load_image_from_base64(image_base64: str):
+    try:
+        image_bytes = base64.b64decode(image_base64)
+        return Image.open(BytesIO(image_bytes)).convert('RGB')
+    except Exception as e:
+        return {"error": f"Failed to decode base64 image: {e}"}
+
+
+def _normalize_bbox(bbox_input):
+    if bbox_input is None:
+        return None
+    if isinstance(bbox_input, (list, tuple)) and len(bbox_input) == 4:
+        return [float(v) for v in bbox_input]
+    if isinstance(bbox_input, str):
+        parts = [p.strip() for p in bbox_input.split(",")]
+        if len(parts) == 4:
+            return [float(v) for v in parts]
+    return None
+
+
+def _build_prompt(job_input: Dict[str, Any]) -> str:
+    input_category = job_input.get("input_category")
+
+    if input_category in {"wall", "floor", "ceiling"}:
+        list_key = f"{input_category}_descriptions"
+        options = job_input.get(list_key)
+        if not isinstance(options, list) or not options:
+            raise ValueError(
+                f"Missing or empty '{list_key}' list for input_category '{input_category}'."
+            )
+        options_block = "\n".join([f"- {str(o)}" for o in options])
+        return SURFACE_PROMPT_TEMPLATE.format(
+            surface=input_category,
+            options_block=options_block
+        ).strip()
+
+    bbox = _normalize_bbox(job_input.get("bbox"))
+    if bbox is None:
+        raise ValueError("Missing or invalid 'bbox'. Expected format: [x, y, width, height].")
+
+    if input_category == "window":
+        return WINDOW_PROMPT_TEMPLATE.format(bbox=bbox).strip()
+
+    if input_category == "door":
+        return DOOR_PROMPT_TEMPLATE.format(bbox=bbox).strip()
+
+    object_description_line = (
+        "A concise but descriptive summary of the primary object. "
+        "Include its type, primary material, and color."
+    )
+    if input_category:
+        object_description_line += f" The object should be in the category '{input_category}'."
+
+    return GENERIC_PROMPT_TEMPLATE.format(
+        bbox=bbox,
+        object_description_line=object_description_line
+    ).strip()
+
+
 def handler(job):
     """
     Processes a single job from the RunPod serverless queue.
     """
     job_input = job.get('input', {})
 
-    # --- Get Image from URL (Azure Blob / Web) ---
-    image_url = job_input.get('image_url')
-    
-    # Fallback support for base64
+    # --- Get Image(s) from URL(s) (Azure Blob / Web) ---
+    image_urls = _coerce_image_urls(job_input)
     image_base64 = job_input.get('image_base64')
 
-    image = None
+    images = []
 
-    if image_url:
-        try:
-            print(f"Downloading image from: {image_url}")
-            response = requests.get(image_url)
-            response.raise_for_status()
-            
-            # Load into BytesIO buffer to handle non-seekable streams
-            image = Image.open(BytesIO(response.content)).convert('RGB')
-            
-        except Exception as e:
-            return {"error": f"Failed to download image from URL: {e}"}
-            
+    if image_urls:
+        for url in image_urls:
+            loaded = _load_image_from_url(url)
+            images.append(loaded)
     elif image_base64:
-        try:
-            image_bytes = base64.b64decode(image_base64)
-            image = Image.open(BytesIO(image_bytes)).convert('RGB')
-        except Exception as e:
-            return {"error": f"Failed to decode base64 image: {e}"}
-            
+        images.append(_load_image_from_base64(image_base64))
     else:
-        return {"error": "No image provided. Please include 'image_url' in the input."}
+        return {
+            "error": "No image provided. Please include 'image_url' (string), "
+                     "'image_url' (list), or 'image_urls' (list) in the input."
+        }
 
     # --- Get Prompt ---
-    prompt = job_input.get('prompt', DEFAULT_PROMPT)
+    try:
+        prompt = job_input.get('prompt') or _build_prompt(job_input)
+    except ValueError as ve:
+        return {"error": str(ve)}
     messages = [{'role': 'user', 'content': prompt}]
 
     # --- Run Inference ---
     try:
-        # Generate raw string response
+        for idx, image in enumerate(images):
+            if isinstance(image, dict) and image.get("error"):
+                return {"error": f"Image {idx} load failed: {image['error']}"}
+
+        image_input = images[0] if len(images) == 1 else images
+
         raw_response = model.chat(
-            image=image,
+            image=image_input,
             msgs=messages,
             tokenizer=tokenizer,
             sampling=True,
@@ -133,10 +256,7 @@ def handler(job):
 
         print(f"--- Raw Model Response --- \n{raw_response}\n--------------------------")
 
-        # Parse the raw string into a JSON object
         parsed_json = parse_vlm_output(raw_response)
-        
-        # Return the actual Python dictionary (which RunPod serializes to JSON)
         return parsed_json
 
     except ValueError as ve:
