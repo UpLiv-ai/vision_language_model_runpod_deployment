@@ -71,20 +71,62 @@ else:
 # Define the path to the local model directory
 local_model_path = os.path.join(base_volume_path, MODEL_ID.split('/')[-1])
 
-# Check if the model exists locally, otherwise use the Hub ID
-if os.path.exists(local_model_path):
-    print(f"✅ Loading model from local path: {local_model_path}")
-    path_to_load = local_model_path
-else:
-    print(f"⚠️ Local model not found. Downloading from Hugging Face Hub: {MODEL_ID}")
-    path_to_load = MODEL_ID
+# SAFETY CHECK: If the model exists but we are crashing, we might need to wipe it.
+# For now, let's try to load. If it fails, we wipe and re-download.
 
-print("Loading model and tokenizer...")
-model = AutoModel.from_pretrained(
-    path_to_load,
-    trust_remote_code=True,
-    low_cpu_mem_usage=True
-)
+try:
+    print("Attempting to load model...")
+    # Try loading WITHOUT checking local existence first to let HF handle integrity
+    # OR if you prefer your logic:
+    if os.path.exists(local_model_path):
+        print(f"✅ Found local cache at: {local_model_path}")
+        path_to_load = local_model_path
+    else:
+        path_to_load = MODEL_ID
+        
+    model = AutoModel.from_pretrained(
+        path_to_load,
+        trust_remote_code=True,
+        low_cpu_mem_usage=True,
+        torch_dtype=torch.float16,
+        device_map="cuda" # Explicitly use accelerate to handle device placement
+    )
+except Exception as e:
+    print(f"⚠️ Load failed: {e}")
+    if os.path.exists(local_model_path):
+        print("♻️ Detected potentially stale/corrupt cache. Deleting and re-downloading...")
+        shutil.rmtree(local_model_path)
+        
+        # Retry download from Hub
+        model = AutoModel.from_pretrained(
+            MODEL_ID,
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
+            torch_dtype=torch.float16,
+            device_map="cuda"
+        )
+        # Verify it saved to the correct volume path for next time
+        model.save_pretrained(local_model_path)
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
+        tokenizer.save_pretrained(local_model_path)
+    else:
+        raise e
+
+
+# # Check if the model exists locally, otherwise use the Hub ID
+# if os.path.exists(local_model_path):
+#     print(f"✅ Loading model from local path: {local_model_path}")
+#     path_to_load = local_model_path
+# else:
+#     print(f"⚠️ Local model not found. Downloading from Hugging Face Hub: {MODEL_ID}")
+#     path_to_load = MODEL_ID
+
+# print("Loading model and tokenizer...")
+# model = AutoModel.from_pretrained(
+#     path_to_load,
+#     trust_remote_code=True,
+#     low_cpu_mem_usage=True
+# )
 tokenizer = AutoTokenizer.from_pretrained(
     path_to_load,
     trust_remote_code=True,
