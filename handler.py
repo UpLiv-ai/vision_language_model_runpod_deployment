@@ -48,7 +48,7 @@ Focus ONLY on the window frame. Ensure the bounding box encompasses the entire f
 Hint bbox(es) (Normalized 0-1000, [x1, y1, x2, y2]): {bbox}
 
 JSON Structure and Field Definitions:
-object_description (string): A STRICTLY BRIEF (2-5 words) description of the window frame class and material (e.g., "white wooden window frame" or "black aluminum window"). DO NOT describe the view, glass, or wall.
+object_description (string): A STRICTLY BRIEF (2-5 words) description of the window frame and blinds(if present) class and material (e.g., "white wooden window frame" or "black aluminum window"). DO NOT describe the view, glass, or wall.
 reasoning (string): Briefly explain how you ensured the box contains the whole frame.
 refined_bboxes (array of arrays): A list of refined bounding boxes, one for each input image. 
 Format: [[x1, y1, x2, y2], ...]. Coordinates must be normalized 0-1000 integers.
