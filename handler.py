@@ -15,7 +15,8 @@ from transformers import AutoModel, AutoTokenizer
 
 MODEL_ID = "openbmb/MiniCPM-o-4_5"
 
-# --- PROMPT UPDATES: Emphasizing INCLUSION over tightness for SAM3 preparation ---
+# --- PROMPT UPDATES: STRICT BREVITY FOR SAM3 ---
+
 GENERIC_PROMPT_TEMPLATE = """
 VLM Prompt for Image Analysis
 Your task is to act as an expert scene analyzer. You are provided with {num_images} image(s).
@@ -47,7 +48,7 @@ Focus ONLY on the window frame. Ensure the bounding box encompasses the entire f
 Hint bbox(es) (Normalized 0-1000, [x1, y1, x2, y2]): {bbox}
 
 JSON Structure and Field Definitions:
-object_description (string): A concise description of the window frame only. Include frame material and color.
+object_description (string): A STRICTLY BRIEF (2-5 words) description of the window frame class and material (e.g., "white wooden window frame" or "black aluminum window"). DO NOT describe the view, glass, or wall.
 reasoning (string): Briefly explain how you ensured the box contains the whole frame.
 refined_bboxes (array of arrays): A list of refined bounding boxes, one for each input image. 
 Format: [[x1, y1, x2, y2], ...]. Coordinates must be normalized 0-1000 integers.
@@ -61,7 +62,7 @@ Describe the door and its frame together. Ensure the bounding box encompasses th
 Hint bbox(es) (Normalized 0-1000, [x1, y1, x2, y2]): {bbox}
 
 JSON Structure and Field Definitions:
-object_description (string): A concise description of the door and its frame. Include materials and colors.
+object_description (string): A STRICTLY BRIEF (2-5 words) description of the door class, material, and color (e.g., "white paneled door" or "brown wooden sliding door"). DO NOT describe the room, floor, or handle details.
 reasoning (string): Briefly explain how you ensured the box contains the whole door and frame.
 refined_bboxes (array of arrays): A list of refined bounding boxes, one for each input image. 
 Format: [[x1, y1, x2, y2], ...]. Coordinates must be normalized 0-1000 integers.
@@ -181,29 +182,21 @@ def _normalize_box(box_pixel: List[float], width: int, height: int) -> List[int]
     return [max(0, min(1000, x1_n)), max(0, min(1000, y1_n)), max(0, min(1000, x2_n)), max(0, min(1000, y2_n))]
 
 def _denormalize_box_with_padding(box_norm: List[int], width: int, height: int, padding_pct: float = 0.05) -> List[int]:
-    """
-    Convert Norm [x1,y1,x2,y2] -> Pixel [x,y,w,h] AND adds a safety padding.
-    This ensures SAM3 gets a box that definitely includes the object edges.
-    """
     x1_n, y1_n, x2_n, y2_n = box_norm
     
-    # 1. Convert back to pixel coordinates
     x1 = int((x1_n / 1000) * width)
     y1 = int((y1_n / 1000) * height)
     x2 = int((x2_n / 1000) * width)
     y2 = int((y2_n / 1000) * height)
 
-    # 2. Calculate width/height based on model output
     w_raw = x2 - x1
     h_raw = y2 - y1
 
-    # 3. Apply Padding (expand box outwards)
     pad_x = int(w_raw * padding_pct)
     pad_y = int(h_raw * padding_pct)
 
     final_x1 = max(0, x1 - pad_x)
     final_y1 = max(0, y1 - pad_y)
-    # Ensure x2/y2 don't exceed image dimensions
     final_x2 = min(width, x2 + pad_x)
     final_y2 = min(height, y2 + pad_y)
     
@@ -250,8 +243,13 @@ def _build_prompt(job_input: Dict[str, Any], bboxes_norm: List[List[int]], num_i
 
     bbox_str = _format_bbox_string(bboxes_norm)
     
-    object_description_line = "A concise but descriptive summary of the primary object. Include its type, primary material, and color."
-    if input_category: object_description_line += f" The object should be in the category '{input_category}'."
+    # Generic Prompt Update: Strict brevity
+    object_description_line = (
+        "A STRICTLY BRIEF (2-5 words) text prompt for the object, suitable for a segmentation model (e.g. 'yellow armchair' or 'wooden table'). "
+        "Do not include background details."
+    )
+    if input_category: 
+        object_description_line += f" The object should be in the category '{input_category}'."
 
     if input_category == "window": 
         return WINDOW_PROMPT_TEMPLATE.format(bbox=bbox_str, num_images=num_images).strip()
@@ -352,7 +350,7 @@ def handler(job):
 
 
 # --- 4. Execution Logic ---
-# Running serverless endpoint
+
 runpod.serverless.start({"handler": handler})
 
 # if __name__ == "__main__":
@@ -406,7 +404,6 @@ runpod.serverless.start({"handler": handler})
 #                         # Draw Refined + Padded (Green)
 #                         if i < len(refined_bboxes):
 #                             rx, ry, rw, rh = refined_bboxes[i]
-#                             # Ensure coordinates are valid for drawing
 #                             if rw > 0 and rh > 0:
 #                                 draw.rectangle([rx, ry, rx + rw, ry + rh], outline="green", width=5)
 
