@@ -352,6 +352,7 @@ def handler(job):
 
 
 # --- 4. Execution Logic ---
+# Running serverless endpoint
 runpod.serverless.start({"handler": handler})
 
 # if __name__ == "__main__":
