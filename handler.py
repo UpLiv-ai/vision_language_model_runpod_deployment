@@ -48,7 +48,7 @@ Focus ONLY on the window frame. Ensure the bounding box encompasses the entire f
 Hint bbox(es) (Normalized 0-1000, [x1, y1, x2, y2]): {bbox}
 
 JSON Structure and Field Definitions:
-object_description (string): A STRICTLY BRIEF (2-5 words) description of the window frame and blinds(if present) class and material (e.g., "white wooden window frame" or "black aluminum window"). DO NOT describe the view, glass, or wall.
+object_description (string): A STRICTLY BRIEF (2-5 words) description of the window frame class and material (e.g., "white wooden window frame" or "black aluminum window"). DO NOT describe the view, glass, or wall.
 reasoning (string): Briefly explain how you ensured the box contains the whole frame.
 refined_bboxes (array of arrays): A list of refined bounding boxes, one for each input image. 
 Format: [[x1, y1, x2, y2], ...]. Coordinates must be normalized 0-1000 integers.
@@ -290,15 +290,26 @@ def handler(job):
 
     if not images: return {"error": "No valid images provided."}
 
-    # 2. Process BBoxes (Convert Pixel [xywh] -> Norm [xyxy])
+    # 2. Process BBoxes 
+    # Logic: Extract provided bboxes. If missing or partial, fill with [0, 0, w, h]
     raw_bboxes_pixel = _extract_raw_bboxes(job_input)
     norm_bboxes_xyxy = []
     
-    for i, bbox_px in enumerate(raw_bboxes_pixel):
-        if i < len(images):
-            w, h = images[i].size
-            norm_box = _normalize_box(bbox_px, w, h)
-            norm_bboxes_xyxy.append(norm_box)
+    for i, img in enumerate(images):
+        w, h = img.size
+        
+        # Determine Pixel BBox
+        if i < len(raw_bboxes_pixel):
+            # User provided a specific box
+            bbox_px = raw_bboxes_pixel[i]
+        else:
+            # Default fallback: Full Image Dimensions
+            # print(f"⚠️ No bbox provided for image {i}. Using full image dimensions [0, 0, {w}, {h}].")
+            bbox_px = [0, 0, w, h]
+            
+        # Convert Pixel [xywh] -> Norm [xyxy] (0-1000)
+        norm_box = _normalize_box(bbox_px, w, h)
+        norm_bboxes_xyxy.append(norm_box)
 
     # 3. Build Prompt
     try:
@@ -362,18 +373,15 @@ runpod.serverless.start({"handler": handler})
 #         "piano_test_img_3.jpg"
 #     ]
     
-#     # User's approximate input bboxes [x, y, w, h]
-#     orig_bboxes = [
-#         [100, 200, 800, 600], 
-#         [100, 200, 900, 600], 
-#         [0, 0, 1000, 1000]
-#     ]
+#     # CASE: Testing NO bounding boxes (Should default to full image)
+#     print("ℹ️ Note: Testing with NO input bboxes. Defaults should apply.")
+#     orig_bboxes = [] 
 
 #     test_input = {
 #         "input": {
 #             "image_paths": img_paths,
 #             "input_category": "piano",
-#             "bboxes": orig_bboxes
+#             "bboxes": orig_bboxes # Empty list
 #         }
 #     }
 
@@ -394,12 +402,16 @@ runpod.serverless.start({"handler": handler})
                     
 #                     with Image.open(path) as raw_img:
 #                         img = ImageOps.exif_transpose(raw_img)
+#                         w, h = img.size
 #                         draw = ImageDraw.Draw(img)
 
-#                         # Draw Original (Red)
+#                         # Draw Input (Red) - Either from input or full image default
 #                         if i < len(orig_bboxes):
-#                             x, y, w, h = orig_bboxes[i]
-#                             draw.rectangle([x, y, x + w, y + h], outline="red", width=8)
+#                             x, y, wb, hb = orig_bboxes[i]
+#                             draw.rectangle([x, y, x + wb, y + hb], outline="red", width=8)
+#                         else:
+#                             # Visualize the default full-image box
+#                             draw.rectangle([0, 0, w, h], outline="red", width=8)
 
 #                         # Draw Refined + Padded (Green)
 #                         if i < len(refined_bboxes):
