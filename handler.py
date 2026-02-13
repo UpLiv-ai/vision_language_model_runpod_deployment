@@ -20,7 +20,7 @@ MODEL_ID = "openbmb/MiniCPM-o-4_5"
 GENERIC_PROMPT_TEMPLATE = """
 VLM Prompt for Image Analysis
 Your task is to act as an expert scene analyzer. You are provided with {num_images} image(s).
-For EACH image, identify the primary object contained generally within the hint bounding box.
+For EACH image, identify the primary object, along with any large constituent parts (like pillows on a sofa or on a bed), contained generally within the hint bounding box.
 Your goal is to output a refined bounding box that guarantees the ENTIRE object is inside it.
 Do not make the box too tight. It is better to include a little background than to cut off part of the object.
 
@@ -279,7 +279,7 @@ def _build_prompt(job_input: Dict[str, Any], bboxes_norm: List[List[int]], num_i
     
     # Generic Prompt Update: Strict brevity
     object_description_line = (
-        "A STRICTLY BRIEF (2-5 words) text prompt for the object, suitable for a segmentation model (e.g. 'yellow armchair' or 'wooden table'). "
+        "A STRICTLY BRIEF (2-9 words) text prompt for the object, suitable for a segmentation model (e.g. 'yellow armchair' or 'wooden table'). "
         "Do not include background details."
     )
     if input_category: 
