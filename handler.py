@@ -37,6 +37,7 @@ has_clear_plastic (boolean): Set to true if any part of the object is made of cl
 is_wall_mounted (boolean): Set to true if the object is located or should normally be located/mounted on the wall (like a hanging picture frame).
 is_ceiling_mounted (boolean): Set to true if the object is located or should normally be located/mounted on the ceiling (like a ceiling fan or chandelier).
 is_nsfw (boolean): Set to true if the image contains sexual content (e.g. nudity, genitalia) or extremely offensive material.
+is_rug (boolean): Set to true if the object of interest in the image is a rug.
 reasoning (string): Briefly explain how you ensured the box contains the whole object (e.g., "Expanded to include chair legs").
 refined_bboxes (array of arrays): A list of refined bounding boxes, one for each input image. 
 Format: [[x1, y1, x2, y2], ...]. Coordinates must be normalized 0-1000 integers (Top-Left to Bottom-Right).
