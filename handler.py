@@ -374,7 +374,7 @@ def handler(job):
 
         print(f"--- Raw Model Response --- \n{raw_response}\n--------------------------")
         result_json = parse_vlm_output(raw_response)
-        print(f"--- Refined Model Response --- \n{result_json}\n--------------------------")
+
         # 6. Post-Process: Denormalize WITH PADDING
         if "refined_bboxes" in result_json and isinstance(result_json["refined_bboxes"], list):
             pixel_bboxes_xywh = []
@@ -387,6 +387,8 @@ def handler(job):
             
             result_json["refined_bboxes"] = pixel_bboxes_xywh
             result_json["_note"] = "refined_bboxes returned in [x, y, w, h] pixel format with safety padding for SAM."
+
+        print(f"--- Refined Model Response --- \n{str(result_json)}\n--------------------------")
 
         return result_json
 
