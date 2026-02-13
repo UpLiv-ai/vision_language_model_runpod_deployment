@@ -34,6 +34,9 @@ has_mirror (boolean): Set to true if the object has a mirrored surface.
 has_countertop (boolean): Set to true if the object is or includes a countertop surface.
 has_glass (boolean): Set to true if any part of the object is made of glass.
 has_clear_plastic (boolean): Set to true if any part of the object is made of clear or translucent plastic.
+is_wall_mounted (boolean): Set to true if the object is located or should normally be located/mounted on the wall (like a hanging picture frame).
+is_ceiling_mounted (boolean): Set to true if the object is located or should normally be located/mounted on the ceiling (like a ceiling fan or chandelier).
+is_nsfw (boolean): Set to true if the image contains sexual content (e.g. nudity, genitalia) or extremely offensive material.
 reasoning (string): Briefly explain how you ensured the box contains the whole object (e.g., "Expanded to include chair legs").
 refined_bboxes (array of arrays): A list of refined bounding boxes, one for each input image. 
 Format: [[x1, y1, x2, y2], ...]. Coordinates must be normalized 0-1000 integers (Top-Left to Bottom-Right).
@@ -113,14 +116,44 @@ print("✅ MiniCPM-o 4.5 loaded successfully (Vision Only Mode).")
 
 # --- 2. Helper Functions ---
 
+# def parse_vlm_output(vlm_text_response: str) -> Dict[str, Any]:
+#     match = re.search(r'\{.*\}', vlm_text_response, re.DOTALL)
+#     if match:
+#         json_string = match.group(0)
+#         try:
+#             return json.loads(json_string)
+#         except json.JSONDecodeError:
+#             pass
+#     return {"raw_output": vlm_text_response}
+
 def parse_vlm_output(vlm_text_response: str) -> Dict[str, Any]:
-    match = re.search(r'\{.*\}', vlm_text_response, re.DOTALL)
+    # 1. Try to find JSON inside markdown code blocks first (common in LLMs)
+    code_block_pattern = r"```json\s*(\{.*?\})\s*```"
+    match = re.search(code_block_pattern, vlm_text_response, re.DOTALL)
     if match:
-        json_string = match.group(0)
         try:
-            return json.loads(json_string)
+            return json.loads(match.group(1))
         except json.JSONDecodeError:
             pass
+
+    # 2. Fallback: Find the first '{' and attempt to parse valid JSON from there
+    # This loop finds the substring from the first '{' to the last '}' 
+    # and tries to parse it. If it fails, it strips the last character and tries again.
+    start_index = vlm_text_response.find('{')
+    if start_index == -1:
+        return {"raw_output": vlm_text_response}
+
+    text_to_parse = vlm_text_response[start_index:]
+    
+    # Simple valid JSON extractor: Balance braces or try iterative reduction
+    # Iterative reduction is safer for dirty strings:
+    for i in range(len(text_to_parse), 0, -1):
+        try:
+            potential_json = text_to_parse[:i]
+            return json.loads(potential_json)
+        except json.JSONDecodeError:
+            continue
+            
     return {"raw_output": vlm_text_response}
 
 def _coerce_image_urls(job_input) -> List[str]:
